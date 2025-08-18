@@ -10,6 +10,12 @@ import QLD_query
 import SA_query
 from download import save_kml
 
+try:
+    # Prefer MAPBOX_API_KEY, fall back to MAPBOX_TOKEN
+    pdk.settings.mapbox_api_key = st.secrets.get("MAPBOX_API_KEY", st.secrets.get("MAPBOX_TOKEN", ""))
+except Exception:
+    pass  # don't crash if secrets not set locally
+
 st.set_page_config(page_title="MappingKML", layout="wide")
 
 st.title("MappingKML — Cadastre search & KML export")
@@ -154,32 +160,73 @@ df = st.session_state.get("df", None)
 if not feats:
     st.info("Run a search to see parcels.")
 else:
-    # Split by state for coloured layers
-    features_by_state = {"NSW":[], "QLD":[], "SA":[]}
+    # Group features by state with a fallback bucket
+    features_by_state = {"NSW":[], "QLD":[], "SA":[], "ALL":[]}
     for f in feats:
-        stt = f.get("properties",{}).get("state","Other")
-        if stt in features_by_state:
+        stt = f.get("properties",{}).get("state")
+        if stt in ("NSW","QLD","SA"):
             features_by_state[stt].append(f)
+        else:
+            features_by_state["ALL"].append(f)
 
     color_by_state = {
-        "NSW": [0,90,255,80],
-        "QLD": [0,200,0,80],
-        "SA":  [255,170,0,80],
+        "NSW": [0, 90, 255, 80],
+        "QLD": [0, 200, 0, 80],
+        "SA":  [255, 170, 0, 80],
+        "ALL": [120, 120, 120, 80],
     }
+
     layers = []
     for st_name, feats_list in features_by_state.items():
         if feats_list:
             layers.append(_pydeck_layer_from_features(feats_list, color_by_state[st_name]))
+    if not layers:
+        layers = [_pydeck_layer_from_features(feats, [120,120,120,80])]
 
-    lat, lon = st.session_state.get("last_center", (-27.5, 153.0))
-    view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=8)
+    # Robust center: centroid if available; else bbox; else default
+    def _bbox_center(fs):
+        xmin = ymin = float("inf")
+        xmax = ymax = float("-inf")
+        for f in fs:
+            g = f.get("geometry", {})
+            if g.get("type") == "Polygon":
+                ring = g["coordinates"][0]
+                xs = [pt[0] for pt in ring]; ys = [pt[1] for pt in ring]
+            elif g.get("type") == "MultiPolygon":
+                xs = []; ys = []
+                for poly in g["coordinates"]:
+                    ring = poly[0]
+                    xs += [pt[0] for pt in ring]; ys += [pt[1] for pt in ring]
+            else:
+                continue
+            if xs and ys:
+                xmin = min(xmin, min(xs)); xmax = max(xmax, max(xs))
+                ymin = min(ymin, min(ys)); ymax = max(ymax, max(ys))
+        if xmin == float("inf"):
+            return (-27.5, 153.0)  # lat, lon default
+        lon = (xmin + xmax) / 2.0
+        lat = (ymin + ymax) / 2.0
+        return (lat, lon)
+
+    if df is not None and not df.empty and df["_lat"].notna().any() and df["_lon"].notna().any():
+        lat = float(df["_lat"].dropna().iloc[0]); lon = float(df["_lon"].dropna().iloc[0])
+    else:
+        lat, lon = _bbox_center(feats)
+
+    view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=10)
+
     r = pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
         map_style="mapbox://styles/mapbox/light-v9",
         tooltip={"text":"{state}"}
     )
-    map_slot.pydeck_chart(r)
+
+    # If you have map_slot, use it; otherwise call st.pydeck_chart directly
+    try:
+        map_slot.pydeck_chart(r)
+    except Exception:
+        st.pydeck_chart(r)
 
     with result_slot:
         st.subheader("Results")
