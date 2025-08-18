@@ -8,10 +8,10 @@ def _chunk(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i+n]
 
-def _parse_lotidstrings(raw: str) -> list:
+def _parse_lotplans(raw: str) -> list:
     """
     Accept raw multiline / comma / semicolon separated text.
-    Treat every non-empty token as a lotidstring for QLD, e.g. 1RP912949, 13SP12345.
+    Treat every non-empty token as a lotplan for QLD, e.g. 1RP164839.
     Strips spaces and uppercases.
     """
     if not raw:
@@ -28,26 +28,26 @@ def _parse_lotidstrings(raw: str) -> list:
         vals.append(s)
     # de-dup preserving order
     seen = set()
-    out = []
+    lotplans = []
     for v in vals:
         if v not in seen:
             seen.add(v)
-            out.append(v)
-    return out
+            lotplans.append(v)
+    return lotplans
 
-def build_where_from_lotidstrings(lotids: list) -> list:
+def build_where_from_lotplans(lotplans: list) -> list:
     """
-    Build WHERE clauses using ONLY the lotidstring field.
+    Build WHERE clauses using ONLY the lotplan field.
     """
     clauses = []
-    for group in _chunk(lotids, 100):
+    for group in _chunk(lotplans, 100):
         in_vals = ",".join([f"UPPER('{lp}')" for lp in group])
-        clauses.append(f"UPPER(lotidstring) IN ({in_vals})")
+        clauses.append(f"UPPER(lotplan) IN ({in_vals})")
     return clauses or ["1=2"]
 
 def query(raw_input: str, max_records: int = 4000) -> Dict:
-    lotids = _parse_lotidstrings(raw_input)
-    clauses = build_where_from_lotidstrings(lotids)
+    lotplans = _parse_lotplans(raw_input)
+    clauses = build_where_from_lotplans(lotplans)
 
     all_features = []
     for where in clauses:
