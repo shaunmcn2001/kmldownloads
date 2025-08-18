@@ -17,8 +17,12 @@ st.title("MappingKML — Cadastre search & KML export")
 with st.sidebar:
     st.header("Search")
     raw_input = st.text_area("Enter Lot/Plan pairs (comma or newline separated)", height=160, placeholder="e.g.\n13//DP1242624\n1RP912949\n101//D12345")
-    st.caption("Formats: NSW `LOT//PLAN` (+ optional `LOT/SECTION//PLAN`), SA `PARCEL//PLAN` or `VOLUME/FOLIO` (e.g., `5100/123`).
-For QLD, **enter lotidstring only** (e.g., `1RP912949`, `13SP12345`) — one per line or comma-separated.")
+    st.caption(
+        "Formats: NSW `LOT//PLAN` (+ optional `LOT/SECTION//PLAN`), "
+        "SA `PARCEL//PLAN` or `VOLUME/FOLIO` (e.g., `5100/123`). "
+        "For QLD, **enter lotidstring only** (e.g., `1RP912949`, `13SP12345`) "
+        "— one per line or comma-separated."
+    )
     st.subheader("States")
     col1, col2, col3 = st.columns(3)
     with col1:
