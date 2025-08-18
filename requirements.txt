@@ -1,0 +1,8 @@
+streamlit
+pydeck
+requests
+shapely>=2.0
+pykml
+lxml
+simplekml
+pandas
