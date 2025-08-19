@@ -277,16 +277,16 @@ if st.button("Export KML"):
         st.warning("No features to export. Run a search first.")
     else:
         merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
-        # 1) Use the existing save_kml that writes to disk and returns the path
         path = save_kml(
             merged_fc,
-            out_dir=folder,              # keep your UI folder name
+            out_dir=folder,
             filename="parcels.kml",
             state=None,
             colour=kml_colour,
             line_width=float(line_width),
         )
-        # 2) Offer a browser download (goes to user's local Downloads folder)
+
+        # Offer it to the browser (this saves to the user's local Downloads)
         try:
             with open(path, "rb") as fh:
                 st.download_button(
@@ -295,6 +295,7 @@ if st.button("Export KML"):
                     file_name=os.path.basename(path),
                     mime="application/vnd.google-earth.kml+xml",
                 )
-            st.success(f"KML saved to: {path}")
+            # Optional: keep or remove this line
+            st.success(f"KML saved on server: {path}")
         except Exception as e:
             st.error(f"Could not read KML for download: {e}")
