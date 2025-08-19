@@ -1,6 +1,5 @@
-
 import re
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 
 # ---------- Parsing helpers ----------
 def normalize_plan(plan: str) -> str:
@@ -21,7 +20,7 @@ def expand_lot_ranges(lot_str: str) -> List[str]:
     # Accept "1-3,5,7A" -> ["1","2","3","5","7A"]
     lots = []
     for token in re.split(r"[,\s]+", lot_str.strip()):
-        if not token: 
+        if not token:
             continue
         m = re.fullmatch(r"(\d+)\-(\d+)", token)
         if m:
@@ -33,7 +32,7 @@ def expand_lot_ranges(lot_str: str) -> List[str]:
             lots.append(token)
     return lots
 
-def parse_bulk_entries(raw: str) -> List[Dict]:
+def parse_bulk_entries(raw: str) -> List[Dict[str, Any]]:
     """
     Accepts free text and extracts entries in these forms:
       - LOT//PLAN                (e.g., 13//DP1242624)
@@ -43,7 +42,7 @@ def parse_bulk_entries(raw: str) -> List[Dict]:
       - SA volume/folio          (e.g., 5100/123)
     Returns list of dicts with keys: kind, lot, section, plan, lotplan, lotidstring, volume, folio
     """
-    entries = []
+    entries: List[Dict[str, Any]] = []
     if not raw:
         return entries
 
@@ -60,33 +59,33 @@ def parse_bulk_entries(raw: str) -> List[Dict]:
             lot = normalize_lot(m.group(1))
             section = normalize_lot(m.group(2))
             plan = normalize_plan(m.group(3))
-            entries.append({"kind":"lot_section_plan","lot":lot,"section":section,"plan":plan})
+            entries.append({"kind": "lot_section_plan", "lot": lot, "section": section, "plan": plan})
             continue
 
-        # LOT//PLAN
+        # LOT//PLAN  (allow ranges in the lot part: e.g. "1-3//DP1234")
         m = re.fullmatch(r"(?i)\s*([A-Z0-9,\-\s]+)\s*//\s*([A-Z]+\s*\d+)\s*", s)
         if m:
             lots = expand_lot_ranges(normalize_lot(m.group(1)))
             plan = normalize_plan(m.group(2))
             for lot in lots:
-                entries.append({"kind":"lot_plan","lot":lot,"section":None,"plan":plan})
+                entries.append({"kind": "lot_plan", "lot": lot, "section": None, "plan": plan})
             continue
 
         # SA Volume/Folio
         m = re.fullmatch(r"\s*(\d{1,5})\s*/\s*(\d{1,6})\s*", s)
         if m:
-            entries.append({"kind":"volume_folio","volume":m.group(1), "folio":m.group(2)})
+            entries.append({"kind": "volume_folio", "volume": m.group(1), "folio": m.group(2)})
             continue
 
         # QLD LotPlan like 1RP912949 or 13SP12345
         m = re.fullmatch(r"(?i)\s*(\d+[a-z]{1,3}\d+)\s*", s)
         if m:
-            entries.append({"kind":"lotplan","lotplan":m.group(1).upper()})
+            entries.append({"kind": "lotplan", "lotplan": m.group(1).upper()})
             continue
 
         # NSW lotidstring e.g., LOT 13 DP1242624
         if s.upper().startswith("LOT ") and " DP" in s.upper():
-            entries.append({"kind":"lotidstring","lotidstring":re.sub(r"\s+"," ",s.upper().strip())})
+            entries.append({"kind": "lotidstring", "lotidstring": re.sub(r"\s+", " ", s.upper().strip())})
             continue
 
         # Fallback: try to detect "LOT, PLAN"
@@ -94,10 +93,79 @@ def parse_bulk_entries(raw: str) -> List[Dict]:
         if m:
             lot = normalize_lot(m.group(1))
             plan = normalize_plan(m.group(2))
-            entries.append({"kind":"lot_plan","lot":lot,"section":None,"plan":plan})
+            entries.append({"kind": "lot_plan", "lot": lot, "section": None, "plan": plan})
             continue
 
         # If nothing matched, keep the raw token so the caller can log/skip
-        entries.append({"kind":"unknown","raw":s})
+        entries.append({"kind": "unknown", "raw": s})
 
     return entries
+
+
+# ---------- ArcGIS JSON → GeoJSON converter ----------
+def _arcgis_geom_to_geojson(geom: Dict[str, Any]) -> Dict[str, Any] | None:
+    """
+    Convert a single ArcGIS geometry dict to a GeoJSON geometry dict.
+    Supports Point, MultiPoint, Polyline (paths), Polygon (rings).
+    """
+    if not geom:
+        return None
+
+    # Point
+    if "x" in geom and "y" in geom:
+        return {"type": "Point", "coordinates": [geom["x"], geom["y"]]}
+
+    # MultiPoint
+    if "points" in geom and isinstance(geom["points"], list):
+        pts = geom["points"]
+        if not pts:
+            return None
+        if len(pts) == 1:
+            return {"type": "Point", "coordinates": pts[0]}
+        return {"type": "MultiPoint", "coordinates": pts}
+
+    # Polyline
+    if "paths" in geom and isinstance(geom["paths"], list):
+        paths = [p for p in geom["paths"] if p]
+        if not paths:
+            return None
+        if len(paths) == 1:
+            return {"type": "LineString", "coordinates": paths[0]}
+        return {"type": "MultiLineString", "coordinates": paths}
+
+    # Polygon
+    if "rings" in geom and isinstance(geom["rings"], list):
+        rings = [r for r in geom["rings"] if r]
+        if not rings:
+            return None
+        # Minimal-safe mapping: each ring becomes its own polygon shell.
+        # (ArcGIS uses winding order to mark holes; if you need holes,
+        #  add orientation grouping later.)
+        if len(rings) == 1:
+            return {"type": "Polygon", "coordinates": [rings[0]]}
+        return {"type": "MultiPolygon", "coordinates": [[[ring]] for ring in rings]}
+
+    # Unknown geometry
+    return None
+
+
+def arcgis_to_geojson(fc_arcgis: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert an ArcGIS REST 'f=json' feature set into a GeoJSON FeatureCollection.
+    Input shape example:
+      {"features":[{"attributes":{...},"geometry":{...}}, ...]}
+    """
+    feats = fc_arcgis.get("features") or []
+    out_features: List[Dict[str, Any]] = []
+    for f in feats:
+        props = f.get("attributes") or {}
+        geom = _arcgis_geom_to_geojson(f.get("geometry") or {})
+        if geom is None:
+            # Skip features with empty/unknown geometry
+            continue
+        out_features.append({
+            "type": "Feature",
+            "properties": props,
+            "geometry": geom
+        })
+    return {"type": "FeatureCollection", "features": out_features}
