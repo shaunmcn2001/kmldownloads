@@ -1,6 +1,8 @@
 import pandas as pd
 import json, os, time
 from typing import Dict, List
+import io
+from download import save_kml
 
 try:
     import pydeck as pdk
@@ -274,13 +276,22 @@ if st.button("Export KML"):
     if not st.session_state.get("features"):
         st.warning("No features to export. Run a search first.")
     else:
-        merged_fc = {"type":"FeatureCollection","features":st.session_state["features"]}
-        path = save_kml(
+        merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
+        # Save to memory instead of server dir
+        kml_bytes = io.BytesIO()
+        save_kml(
             merged_fc,
-            out_dir=folder,
+            out_dir=None,          # adjust your save_kml to handle None = return string/bytes
             filename="parcels.kml",
             state=None,
             colour=kml_colour,
             line_width=float(line_width),
+            out_stream=kml_bytes   # add param to support writing to BytesIO
         )
-        st.success(f"KML saved to: {path}")
+        kml_bytes.seek(0)
+        st.download_button(
+            label="Download KML",
+            data=kml_bytes,
+            file_name="parcels.kml",
+            mime="application/vnd.google-earth.kml+xml"
+        )
