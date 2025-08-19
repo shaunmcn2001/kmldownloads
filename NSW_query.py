@@ -1,6 +1,6 @@
 # nsw_query.py (snippet)
 import requests
-from utils_geo import arcgis_to_geojson
+from utils import arcgis_to_geojson
 
 NSW_LAYER_URL = "https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query"
 
