@@ -25,17 +25,15 @@ def _preclean(raw: str) -> List[str]:
         # Accept three forms: LOT//PLAN, LOT/SEC/PLAN, compact LOT+PLAN (e.g., 13DP1246224)
         if "/" in t:
             parts = t.split("/")
-            if len(parts) == 2:  # LOT/PLAN → LOT//PLAN
+            if len(parts) == 2:            # LOT/PLAN → LOT//PLAN
                 t = f"{parts[0]}//{parts[1]}"
             elif len(parts) == 3:
-                # normalize to LOT/SEC/PLAN or LOT//PLAN; we allow empty SEC
-                if parts[1] == "":
+                if parts[1] == "":         # LOT//PLAN (empty sec)
                     t = f"{parts[0]}//{parts[2]}"
-                else:
+                else:                      # LOT/SEC/PLAN
                     t = f"{parts[0]}/{parts[1]}/{parts[2]}"
         else:
-            # compact LOT+PLAN: split last prefix+digits as PLAN
-            m = re.match(r"^([A-Z0-9]+)(DP|SP|CP|RP|BUP)(\d+)$", t)
+            m = re.match(r"^([A-Z0-9]+)(DP|SP|CP|RP|BUP)(\d+)$", t)  # compact LOT+PLAN
             if m:
                 t = f"{m.group(1)}//{m.group(2)}{m.group(3)}"
         if t and t not in seen:
@@ -55,19 +53,30 @@ def _count(where: str) -> int:
     r.raise_for_status()
     return int(r.json().get("count", 0))
 
-def _fetch(where: str, max_records: int) -> Dict[str, Any]:
+# ---------- IDs-first fetch (reliable on SIX) ----------
+def _get_ids(where: str) -> List[int]:
+    params = {"f": "json", "where": where, "returnIdsOnly": "true"}
+    r = requests.get(NSW_LAYER_URL, params=params, timeout=30)
+    r.raise_for_status()
+    ids = r.json().get("objectIds") or []
+    # Some responses return None; normalize to list[int]
+    return [int(x) for x in ids] if ids else []
+
+def _fetch_by_ids(ids: List[int], max_records: int) -> Dict[str, Any]:
+    if not ids:
+        return {"features": []}
     params = {
-        "f": "json",  # faster/more reliable than f=geojson on SIX
-        "where": where,
-        "outFields": "lotidstring,lotnumber,sectionnumber,planlabel",
+        "f": "json",
+        "objectIds": ",".join(map(str, ids[:max_records])),
+        "outFields": "*",                 # use * here; prune later if desired
         "returnGeometry": "true",
         "outSR": 4326,
         "geometryPrecision": 6,
-        "resultRecordCount": max_records
     }
     r = requests.get(NSW_LAYER_URL, params=params, timeout=60)
     r.raise_for_status()
     return r.json()
+# -------------------------------------------------------
 
 def query(raw_input: str, max_records: int = 2000) -> Tuple[Dict[str, Any], List[str]]:
     debug: List[str] = []
@@ -82,13 +91,14 @@ def query(raw_input: str, max_records: int = 2000) -> Tuple[Dict[str, Any], List
     for w in wheres:
         try:
             cnt = _count(w)
-            debug.append(f"NSW WHERE: {w}  -> count={cnt}")
+            debug.append(f"NSW WHERE: {w} -> count={cnt}")
             if cnt == 0:
                 continue
-            arc = _fetch(w, max_records=max_records)
+            ids = _get_ids(w)
+            debug.append(f"NSW IDs: {ids}")
+            arc = _fetch_by_ids(ids, max_records=max_records)
             feats = arc.get("features", [])
-            debug.append(f"NSW FETCH ok: returned={len(feats)} features")
-            # accumulate
+            debug.append(f"NSW FETCH by IDs: returned={len(feats)} features")
             all_arc["features"].extend(feats)
         except Exception as e:
             debug.append(f"NSW error on WHERE chunk: {e}")
