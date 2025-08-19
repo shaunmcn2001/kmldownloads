@@ -51,14 +51,15 @@ def _build_where(lotids: List[str]) -> List[str]:
     return clauses or ["1=2"]
 
 def _count(where: str) -> int:
-    params = {"f": "geojson", "where": where, "returnCountOnly": "true"}
+    # Use ArcGIS JSON for counts (geojson isn't reliable for these control calls)
+    params = {"f": "json", "where": where, "returnCountOnly": "true"}
     r = requests.get(NSW_LAYER_URL, params=params, timeout=30)
     r.raise_for_status()
     return int(r.json().get("count", 0))
 
 # ---------- IDs-first fetch (reliable on SIX) ----------
 def _get_ids(where: str) -> List[int]:
-    params = {"f": "geojson", "where": where, "returnIdsOnly": "true"}
+    params = {"f": "json", "where": where, "returnIdsOnly": "true"}
     r = requests.get(NSW_LAYER_URL, params=params, timeout=30)
     r.raise_for_status()
     ids = r.json().get("objectIds") or []
@@ -68,9 +69,9 @@ def _fetch_by_ids(ids: List[int], max_records: int) -> Dict[str, Any]:
     if not ids:
         return {"features": [], "objectIdFieldName": "OBJECTID"}
     params = {
-        "f": "geojson",
+        "f": "json",                                # <-- ArcGIS JSON (then convert)
         "objectIds": ",".join(map(str, ids[:max_records])),
-        "outFields": "*",                 # keep * to avoid weird zero-feature bug
+        "outFields": "*",                           # keep * to avoid weird zero-feature bug
         "returnGeometry": "true",
         "outSR": 4326,
         "geometryPrecision": 6,
@@ -110,7 +111,7 @@ def query(raw_input: str, max_records: int = 2000) -> Tuple[Dict[str, Any], List
             have_geom = sum(1 for f in feats if f.get("geometry"))
             debug.append(f"NSW FETCH by IDs: returned={len(feats)} features, {have_geom} with geometry")
 
-            # De-dup across chunks by OBJECTID
+            # De-dup across chunks by OBJECTID (ArcGIS JSON → attributes[OBJECTID])
             for f in feats:
                 oid = f.get("attributes", {}).get(oid_field)
                 if oid is None or oid in seen_ids:
