@@ -5,8 +5,6 @@ from typing import List, Tuple, Dict, Any
 def normalize_plan(plan: str) -> str:
     if not plan: return ""
     p = plan.upper().replace(" ", "")
-    # NSW plans often DP/SP/CP; SA plans like D12345 etc; QLD plans like RP, SP, CP.
-    # Keep alphanum only
     p = re.sub(r"[^A-Z0-9]", "", p)
     return p
 
@@ -46,14 +44,13 @@ def parse_bulk_entries(raw: str) -> List[Dict[str, Any]]:
     if not raw:
         return entries
 
-    # Split by newline or comma/semicolon
     pieces = re.split(r"[\n;,]+", raw)
     for piece in pieces:
         s = piece.strip()
         if not s:
             continue
 
-        # NSW/SA style with section: LOT/SECTION//PLAN
+        # LOT/SECTION//PLAN
         m = re.fullmatch(r"(?i)\s*([A-Z0-9\-]+)\s*/\s*([A-Z0-9\-]+)\s*//\s*([A-Z]+\s*\d+)\s*", s)
         if m:
             lot = normalize_lot(m.group(1))
@@ -88,7 +85,7 @@ def parse_bulk_entries(raw: str) -> List[Dict[str, Any]]:
             entries.append({"kind": "lotidstring", "lotidstring": re.sub(r"\s+", " ", s.upper().strip())})
             continue
 
-        # Fallback: try to detect "LOT, PLAN"
+        # Fallback: "LOT, PLAN"
         m = re.fullmatch(r"(?i)\s*([A-Z0-9\-]+)\s*,\s*([A-Z]+\s*\d+)\s*", s)
         if m:
             lot = normalize_lot(m.group(1))
@@ -96,7 +93,6 @@ def parse_bulk_entries(raw: str) -> List[Dict[str, Any]]:
             entries.append({"kind": "lot_plan", "lot": lot, "section": None, "plan": plan})
             continue
 
-        # If nothing matched, keep the raw token so the caller can log/skip
         entries.append({"kind": "unknown", "raw": s})
 
     return entries
@@ -104,10 +100,6 @@ def parse_bulk_entries(raw: str) -> List[Dict[str, Any]]:
 
 # ---------- ArcGIS JSON → GeoJSON converter ----------
 def _arcgis_geom_to_geojson(geom: Dict[str, Any]) -> Dict[str, Any] | None:
-    """
-    Convert a single ArcGIS geometry dict to a GeoJSON geometry dict.
-    Supports Point, MultiPoint, Polyline (paths), Polygon (rings).
-    """
     if not geom:
         return None
 
@@ -138,30 +130,20 @@ def _arcgis_geom_to_geojson(geom: Dict[str, Any]) -> Dict[str, Any] | None:
         rings = [r for r in geom["rings"] if r]
         if not rings:
             return None
-        # Minimal-safe mapping: each ring becomes its own polygon shell.
-        # (ArcGIS uses winding order to mark holes; if you need holes,
-        #  add orientation grouping later.)
         if len(rings) == 1:
             return {"type": "Polygon", "coordinates": [rings[0]]}
+        # Minimal multi-ring mapping (no hole orientation handling)
         return {"type": "MultiPolygon", "coordinates": [[[ring]] for ring in rings]}
 
-    # Unknown geometry
     return None
 
-
 def arcgis_to_geojson(fc_arcgis: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Convert an ArcGIS REST 'f=json' feature set into a GeoJSON FeatureCollection.
-    Input shape example:
-      {"features":[{"attributes":{...},"geometry":{...}}, ...]}
-    """
     feats = fc_arcgis.get("features") or []
     out_features: List[Dict[str, Any]] = []
     for f in feats:
         props = f.get("attributes") or {}
         geom = _arcgis_geom_to_geojson(f.get("geometry") or {})
         if geom is None:
-            # Skip features with empty/unknown geometry
             continue
         out_features.append({
             "type": "Feature",
@@ -169,23 +151,23 @@ def arcgis_to_geojson(fc_arcgis: Dict[str, Any]) -> Dict[str, Any]:
             "geometry": geom
         })
     return {"type": "FeatureCollection", "features": out_features}
-    
-    # utils.py
 
+
+# ---------- NSW properties sanitizer ----------
 def sanitize_nsw_props(geojson_fc: dict) -> dict:
     for f in geojson_fc.get("features", []):
         p = f.setdefault("properties", {})
 
-        # Coerce everything to string so you don’t get 13.0
+        # Force strings (avoid 13.0 etc.)
         for k in ("lotnumber", "sectionnumber", "planlabel", "lotidstring"):
             if k in p and p[k] is not None:
                 p[k] = str(p[k]).strip()
 
-        # Normalize plan casing/spaces
+        # Normalize plan casing
         if p.get("planlabel"):
             p["planlabel"] = p["planlabel"].replace(" ", "").upper()
 
-        # Canonical lotidstring
+        # Canonical lotidstring → label
         canon = p.get("lotidstring")
         if not canon:
             lot = p.get("lotnumber", "")
@@ -206,7 +188,7 @@ def sanitize_nsw_props(geojson_fc: dict) -> dict:
             p["lotidstring"] = canon
             p["label"] = canon
 
-        # Drop noisy props so they don’t leak into tooltips
+        # Drop noisy props
         for noisy in ("OBJECTID", "Shape_Area", "Shape_Length"):
             p.pop(noisy, None)
 
