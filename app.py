@@ -272,30 +272,24 @@ def _hex_rgb_to_kml_abgr(hex_rgb: str, a: int) -> str:
 selected_hex = custom_hex if preset == "Custom…" else PRESET_HEX[preset]
 kml_colour = _hex_rgb_to_kml_abgr(selected_hex, alpha) if selected_hex else None
 
-if st.button("Export KML"):
-    if not st.session_state.get("features"):
-        st.warning("No features to export. Run a search first.")
-    else:
-        merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
-        path = save_kml(
-            merged_fc,
-            out_dir=folder,
-            filename="parcels.kml",
-            state=None,
-            colour=kml_colour,
-            line_width=float(line_width),
-        )
+# Directly provide download if features exist
+if st.session_state.get("features"):
+    merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
+    path = save_kml(
+        merged_fc,
+        out_dir=folder,
+        filename="parcels.kml",
+        state=None,
+        colour=kml_colour,
+        line_width=float(line_width),
+    )
 
-        # Offer it to the browser (this saves to the user's local Downloads)
-        try:
-            with open(path, "rb") as fh:
-                st.download_button(
-                    label="Download KML",
-                    data=fh.read(),
-                    file_name=os.path.basename(path),
-                    mime="application/vnd.google-earth.kml+xml",
-                )
-            # Optional: keep or remove this line
-            st.success(f"KML saved on server: {path}")
-        except Exception as e:
-            st.error(f"Could not read KML for download: {e}")
+    with open(path, "rb") as fh:
+        st.download_button(
+            label="Download KML",
+            data=fh.read(),
+            file_name="parcels.kml",
+            mime="application/vnd.google-earth.kml+xml",
+        )
+else:
+    st.info("Run a search to enable KML download.")
