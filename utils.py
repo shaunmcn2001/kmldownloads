@@ -169,3 +169,45 @@ def arcgis_to_geojson(fc_arcgis: Dict[str, Any]) -> Dict[str, Any]:
             "geometry": geom
         })
     return {"type": "FeatureCollection", "features": out_features}
+    
+    # utils.py
+
+def sanitize_nsw_props(geojson_fc: dict) -> dict:
+    for f in geojson_fc.get("features", []):
+        p = f.setdefault("properties", {})
+
+        # Coerce everything to string so you don’t get 13.0
+        for k in ("lotnumber", "sectionnumber", "planlabel", "lotidstring"):
+            if k in p and p[k] is not None:
+                p[k] = str(p[k]).strip()
+
+        # Normalize plan casing/spaces
+        if p.get("planlabel"):
+            p["planlabel"] = p["planlabel"].replace(" ", "").upper()
+
+        # Canonical lotidstring
+        canon = p.get("lotidstring")
+        if not canon:
+            lot = p.get("lotnumber", "")
+            sec = p.get("sectionnumber", "")
+            plan = p.get("planlabel", "")
+            if lot and plan:
+                canon = f"{lot}/{sec}/{plan}" if sec else f"{lot}//{plan}"
+        else:
+            up = canon.upper()
+            if up.startswith("LOT ") and " DP" in up:
+                parts = up.split()
+                if len(parts) >= 3:
+                    lot = parts[1]
+                    plan = parts[-1].replace(" ", "")
+                    canon = f"{lot}//{plan}"
+
+        if canon:
+            p["lotidstring"] = canon
+            p["label"] = canon
+
+        # Drop noisy props so they don’t leak into tooltips
+        for noisy in ("OBJECTID", "Shape_Area", "Shape_Length"):
+            p.pop(noisy, None)
+
+    return geojson_fc
