@@ -51,14 +51,14 @@ def _build_where(lotids: List[str]) -> List[str]:
     return clauses or ["1=2"]
 
 def _count(where: str) -> int:
-    params = {"f": "json", "where": where, "returnCountOnly": "true"}
+    params = {"f": "geojson", "where": where, "returnCountOnly": "true"}
     r = requests.get(NSW_LAYER_URL, params=params, timeout=30)
     r.raise_for_status()
     return int(r.json().get("count", 0))
 
 # ---------- IDs-first fetch (reliable on SIX) ----------
 def _get_ids(where: str) -> List[int]:
-    params = {"f": "json", "where": where, "returnIdsOnly": "true"}
+    params = {"f": "geojson", "where": where, "returnIdsOnly": "true"}
     r = requests.get(NSW_LAYER_URL, params=params, timeout=30)
     r.raise_for_status()
     ids = r.json().get("objectIds") or []
@@ -68,7 +68,7 @@ def _fetch_by_ids(ids: List[int], max_records: int) -> Dict[str, Any]:
     if not ids:
         return {"features": [], "objectIdFieldName": "OBJECTID"}
     params = {
-        "f": "json",
+        "f": "geojson",
         "objectIds": ",".join(map(str, ids[:max_records])),
         "outFields": "*",                 # keep * to avoid weird zero-feature bug
         "returnGeometry": "true",
