@@ -5,7 +5,6 @@ from typing import Dict, List
 try:
     import pydeck as pdk
     import streamlit as st
-    # Use MAPBOX_API_KEY if present, else MAPBOX_TOKEN
     pdk.settings.mapbox_api_key = st.secrets.get("MAPBOX_API_KEY", st.secrets.get("MAPBOX_TOKEN", ""))
 except Exception:
     pass
@@ -26,9 +25,7 @@ with st.sidebar:
             height=160,
             placeholder="NSW: 13//DP1242624\nQLD: 1RP164839\nSA: 101//D12345 or 5100/123"
         )
-        st.caption(
-            "NSW: LOT//PLAN (optional LOT/SECTION//PLAN)  |  QLD: lotplan (e.g. 1RP164839)  |  SA: PARCEL//PLAN or VOLUME/FOLIO."
-        )
+        st.caption("NSW: LOT//PLAN (optional LOT/SECTION//PLAN)  |  QLD: lotplan (e.g. 1RP164839)  |  SA: PARCEL//PLAN or VOLUME/FOLIO.")
         c1, c2, c3 = st.columns(3)
         with c1: use_nsw = st.checkbox("NSW", True, key="use_nsw")
         with c2: use_qld = st.checkbox("QLD", True, key="use_qld")
@@ -42,10 +39,9 @@ st.session_state.setdefault("errors", [])
 st.session_state.setdefault("debug_urls", [])
 st.session_state.setdefault("last_center", (-27.5, 153.0))
 
-# helper to remember debug info
-def _remember_debug(url):
-    if url and url not in st.session_state["debug_urls"]:
-        st.session_state["debug_urls"].append(url)
+def _remember_debug(url_or_line: str):
+    if url_or_line and url_or_line not in st.session_state["debug_urls"]:
+        st.session_state["debug_urls"].append(url_or_line)
 
 def _to_dataframe(features: List[Dict]) -> pd.DataFrame:
     rows = []
@@ -89,6 +85,39 @@ def _pydeck_layer_from_features(features: List[Dict], color=[0, 90, 255, 80]):
     )
     return layer
 
+# New: robust bbox center for any geometry type
+def _iter_xy_from_geom(geom):
+    """Yield (x,y) pairs from any GeoJSON geometry, flattening nested arrays."""
+    if not geom:
+        return
+    coords = geom.get("coordinates")
+    def walk(c):
+        if isinstance(c, (list, tuple)) and c and isinstance(c[0], (int, float)):
+            x = float(c[0])
+            y = float(c[1]) if len(c) > 1 else 0.0
+            yield (x, y)
+        else:
+            for part in (c or []):
+                yield from walk(part)
+    yield from walk(coords)
+
+def _bbox_center(features):
+    """Return (lat, lon) center of bbox across all feature geometries; fallback to default."""
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    for f in features or []:
+        geom = (f or {}).get("geometry")
+        if not geom:
+            continue
+        for x, y in _iter_xy_from_geom(geom):
+            if x < xmin: xmin = x
+            if x > xmax: xmax = x
+            if y < ymin: ymin = y
+            if y > ymax: ymax = y
+    if xmin == float("inf"):
+        return (-27.5, 153.0)
+    return ((ymin + ymax)/2.0, (xmin + xmax)/2.0)
+
 if submitted and raw_input.strip():
     st.session_state["errors"] = []
     st.session_state["debug_urls"] = []
@@ -99,13 +128,14 @@ if submitted and raw_input.strip():
             try:
                 res = NSW_query.query(raw_input)
                 if isinstance(res, tuple):
-                    fc, urls = res
-                    for u in urls: _remember_debug(u)
+                    fc, dbg = res
+                    for line in dbg: _remember_debug(line)
                 else:
                     fc = res
                 for f in fc.get("features", []):
-                    f.setdefault("properties", {})["source"] = "NSW_Cadastre"
-                    f["properties"]["state"] = "NSW"
+                    p = f.setdefault("properties", {})
+                    p["source"] = "NSW_Cadastre"
+                    p["state"] = "NSW"
                 collections.append(fc)
             except Exception as e:
                 st.session_state["errors"].append(f"NSW error: {e}")
@@ -119,8 +149,12 @@ if submitted and raw_input.strip():
                 else:
                     fc = res
                 for f in fc.get("features", []):
-                    f.setdefault("properties", {})["source"] = "QLD_LPPF"
-                    f["properties"]["state"] = "QLD"
+                    p = f.setdefault("properties", {})
+                    p["source"] = "QLD_LPPF"
+                    p["state"] = "QLD"
+                    # optional: set label if your QLD props include lotplan
+                    if "label" not in p and "lotplan" in p:
+                        p["label"] = p["lotplan"]
                 collections.append(fc)
             except Exception as e:
                 st.session_state["errors"].append(f"QLD error: {e}")
@@ -134,8 +168,9 @@ if submitted and raw_input.strip():
                 else:
                     fc = res
                 for f in fc.get("features", []):
-                    f.setdefault("properties", {})["source"] = "SA_DAP_Parcels"
-                    f["properties"]["state"] = "SA"
+                    p = f.setdefault("properties", {})
+                    p["source"] = "SA_DAP_Parcels"
+                    p["state"] = "SA"
                 collections.append(fc)
             except Exception as e:
                 st.session_state["errors"].append(f"SA error: {e}")
@@ -158,7 +193,7 @@ with st.expander("Diagnostics", expanded=False):
         for e in errs: st.write("• ", e)
     dbg = st.session_state.get("debug_urls", [])
     if dbg:
-        st.markdown("**Query URLs:**")
+        st.markdown("**Query details:**")
         for u in dbg:
             st.code(u, language="text")
 
@@ -190,28 +225,6 @@ else:
     if not layers:
         layers = [_pydeck_layer_from_features(feats, [120,120,120,80])]
 
-    def _bbox_center(fs):
-        xmin = ymin = float("inf")
-        xmax = ymax = float("-inf")
-        for f in fs:
-            g = f.get("geometry", {})
-            if g.get("type") == "Polygon":
-                ring = g["coordinates"][0]
-                xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
-            elif g.get("type") == "MultiPolygon":
-                xs = []; ys = []
-                for poly in g["coordinates"]:
-                    ring = poly[0]
-                    xs += [p[0] for p in ring]; ys += [p[1] for p in ring]
-            else:
-                continue
-            if xs and ys:
-                xmin = min(xmin, min(xs)); xmax = max(xmax, max(xs))
-                ymin = min(ymin, min(ys)); ymax = max(ymax, max(ys))
-        if xmin == float("inf"):
-            return (-27.5, 153.0)
-        return ((ymin + ymax)/2.0, (xmin + xmax)/2.0)
-
     if df is not None and not df.empty and df["_lat"].notna().any() and df["_lon"].notna().any():
         lat = float(df["_lat"].dropna().iloc[0]); lon = float(df["_lon"].dropna().iloc[0])
     else:
@@ -222,7 +235,7 @@ else:
         layers=layers,
         initial_view_state=view,
         map_style="mapbox://styles/mapbox/light-v9",
-        tooltip={"text":"{state}"}
+        tooltip={"html": "{state} – {label}", "style": {"backgroundColor": "white", "color": "black"}}
     )
     st.pydeck_chart(deck)
 
