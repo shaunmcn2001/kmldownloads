@@ -10,7 +10,7 @@ try:
 except Exception:
     pass
 
-from nsw_query import query as nsw_query
+import NSW_query
 import QLD_query
 import SA_query
 from download import save_kml
@@ -97,8 +97,12 @@ if submitted and raw_input.strip():
     with st.spinner("Querying services..."):
         if st.session_state.get("use_nsw"):
             try:
-                gj_nsw = nsw_query(raw_input, max_records=2000)
-                fc = gj_nsw
+                res = NSW_query.query(raw_input)
+                if isinstance(res, tuple):
+                    fc, urls = res
+                    for u in urls: _remember_debug(u)
+                else:
+                    fc = res
                 for f in fc.get("features", []):
                     f.setdefault("properties", {})["source"] = "NSW_Cadastre"
                     f["properties"]["state"] = "NSW"
