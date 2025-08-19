@@ -277,21 +277,24 @@ if st.button("Export KML"):
         st.warning("No features to export. Run a search first.")
     else:
         merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
-        # Save to memory instead of server dir
-        kml_bytes = io.BytesIO()
-        save_kml(
+        # 1) Use the existing save_kml that writes to disk and returns the path
+        path = save_kml(
             merged_fc,
-            out_dir=None,          # adjust your save_kml to handle None = return string/bytes
+            out_dir=folder,              # keep your UI folder name
             filename="parcels.kml",
             state=None,
             colour=kml_colour,
             line_width=float(line_width),
-            out_stream=kml_bytes   # add param to support writing to BytesIO
         )
-        kml_bytes.seek(0)
-        st.download_button(
-            label="Download KML",
-            data=kml_bytes,
-            file_name="parcels.kml",
-            mime="application/vnd.google-earth.kml+xml"
-        )
+        # 2) Offer a browser download (goes to user's local Downloads folder)
+        try:
+            with open(path, "rb") as fh:
+                st.download_button(
+                    label="Download KML",
+                    data=fh.read(),
+                    file_name=os.path.basename(path),
+                    mime="application/vnd.google-earth.kml+xml",
+                )
+            st.success(f"KML saved to: {path}")
+        except Exception as e:
+            st.error(f"Could not read KML for download: {e}")
