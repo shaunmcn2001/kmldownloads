@@ -21,4 +21,5 @@ def query(raw_input: str, max_records: int = 2000):
     arc = r.json()
 
     geo = arcgis_to_geojson(arc)  # <-- convert to GeoJSON FeatureCollection
+    geo = sanitize_nsw_props(geo)
     return geo
