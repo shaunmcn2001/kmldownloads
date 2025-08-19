@@ -25,7 +25,7 @@ def _preclean(raw: str) -> List[str]:
         t = re.sub(r"[^A-Z0-9/]", "", t)  # keep '/'
         if not t:
             continue
-        # Accept forms: LOT//PLAN, LOT/SEC/PLAN, compact LOT+PLAN (e.g., 13DP1246224)
+        # LOT//PLAN, LOT/SEC/PLAN, or compact LOT+PLAN (e.g., 13DP1246224)
         if "/" in t:
             parts = t.split("/")
             if len(parts) == 2:            # LOT/PLAN → LOT//PLAN
@@ -70,7 +70,7 @@ def _fetch_by_ids(ids: List[int], max_records: int) -> Dict[str, Any]:
     params = {
         "f": "json",
         "objectIds": ",".join(map(str, ids[:max_records])),
-        "outFields": "*",                 # use * here; prune later if desired
+        "outFields": "*",                 # keep * to avoid weird zero-feature bug
         "returnGeometry": "true",
         "outSR": 4326,
         "geometryPrecision": 6,
