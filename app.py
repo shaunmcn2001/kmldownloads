@@ -16,8 +16,8 @@ import QLD_query
 import SA_query
 from download import save_kml
 
-st.set_page_config(page_title="MappingKML", layout="wide")
-st.title("MappingKML — Cadastre search & KML export")
+st.set_page_config(page_title="KML Downloader", layout="wide")
+st.title("KML Download")
 
 with st.sidebar:
     st.header("Search")
