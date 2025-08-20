@@ -6,17 +6,14 @@ import simplekml
 DEFAULT_STYLE = {
     "line_width": 1.5,
     "line_color": "ffaaaaaa",   # aabbggrr (KML is ABGR)
-    "poly_color": "7d00ff00",   # 0x7d opacity + 00ff00 green -> ABGR
+    "poly_color": "7d00ff00",   # opacity 0x7d + 00ff00 -> ABGR
 }
 
 STATE_COLOURS = {
-    "NSW": "7d0000ff",  # semi-blue
-    "QLD": "7d00ff00",  # semi-green
-    "SA":  "7d00ffff",  # semi-yellow (red+green)
+    "NSW": "7d0000ff",
+    "QLD": "7d00ff00",
+    "SA":  "7d00ffff",
 }
-
-def _kml_color_from_rgba(r: int, g: int, b: int, a: int) -> str:
-    return f"{a:02x}{b:02x}{g:02x}{r:02x}"
 
 def _feature_popup_html(props: Dict) -> str:
     preferred = [
@@ -58,10 +55,7 @@ def _as_positions(seq) -> List[Tuple[float, float]]:
     return out
 
 def _iter_polygons_with_holes(geom: Dict) -> Iterable[Tuple[List[Tuple[float,float]], List[List[Tuple[float,float]]]]]:
-    """
-    Yield (outer_ring, inner_rings[]) pairs from a GeoJSON Polygon/MultiPolygon.
-    Rings are (lon,lat) tuples and are NOT closed here.
-    """
+    """Yield (outer_ring, inner_rings[]) from Polygon/MultiPolygon (not closed)."""
     if not geom:
         return
     t = geom.get("type")
@@ -80,25 +74,26 @@ def _iter_polygons_with_holes(geom: Dict) -> Iterable[Tuple[List[Tuple[float,flo
                 yield outer, [r for r in inners if r]
     # ignore non-polygons
 
-# ... keep the rest of your file as-is (imports, DEFAULT_STYLE, STATE_COLOURS, helpers)
-
 def save_kml(
     feature_collection: Dict,
     out_dir: str,
     filename: str = "parcels.kml",
     state: Optional[str] = None,
     colour: Optional[str] = None,
-    line_width: float = 1.5
+    line_width: float = 1.5,
+    folder_name: Optional[str] = None,   # <-- added
 ) -> str:
     """
     Save a GeoJSON FeatureCollection to a styled KML file with popups.
-    - Groups ALL features by lotidstring (fallback: label -> lotplan -> 'parcel')
-    - ONE Placemark per group using MultiGeometry
-    - Polygon + MultiPolygon supported (holes included)
-    - Sidebar shows ONLY the placemark name (snippet hidden)
+    - ONE folder (named `folder_name`, if provided)
+    - Group ALL features by lotidstring (fallback: label -> lotplan -> 'parcel')
+    - ONE MultiGeometry placemark per group (so the sidebar shows one row)
     """
     os.makedirs(out_dir, exist_ok=True)
     kml = simplekml.Kml()
+
+    # Create a parent folder if requested
+    parent = kml.newfolder(name=folder_name) if folder_name else kml
 
     poly_colour = colour or (STATE_COLOURS.get(state.upper(), DEFAULT_STYLE["poly_color"]) if state else DEFAULT_STYLE["poly_color"])
     line_colour = DEFAULT_STYLE["line_color"]
@@ -113,51 +108,27 @@ def save_kml(
         groups.setdefault(key, {"props": props, "geoms": []})
         groups[key]["geoms"].append(f.get("geometry", {}) or {})
 
+    # One MultiGeometry placemark per lot
     for key, bundle in groups.items():
         props = bundle["props"]
         name = key
         desc_html = _feature_popup_html(props)
 
-        # ✅ Use MultiGeometry placemark (this exists in simplekml)
-        mg = kml.newmultigeometry(name=name, description=desc_html)
+        mg = parent.newmultigeometry(name=name, description=desc_html)
         mg.snippet = simplekml.Snippet("", maxlines=0)  # sidebar: name only
         mg.style.polystyle = simplekml.PolyStyle(color=poly_colour, fill=1, outline=1)
         mg.style.linestyle = simplekml.LineStyle(color=line_colour, width=line_width)
 
-        # Add all polygons (and holes) to this single placemark
         for geom in bundle["geoms"]:
-            t = (geom or {}).get("type")
-            c = (geom or {}).get("coordinates")
-
-            if t == "Polygon" and isinstance(c, list) and c:
-                outer = [(x, y) for x, y, *rest in c[0]]
-                if outer and outer[0] != outer[-1]:
-                    outer.append(outer[0])
+            for outer, inners in _iter_polygons_with_holes(geom):
+                if not outer:
+                    continue
                 poly = mg.newpolygon()
-                poly.outerboundaryis = outer
-                for hole in c[1:]:
-                    inner = [(x, y) for x, y, *rest in hole]
-                    if inner and inner[0] != inner[-1]:
-                        inner.append(inner[0])
-                    if inner:
-                        poly.innerboundaryis.append(inner)
-
-            elif t == "MultiPolygon" and isinstance(c, list):
-                for polycoords in c:
-                    if not polycoords:
-                        continue
-                    outer = [(x, y) for x, y, *rest in polycoords[0]]
-                    if outer and outer[0] != outer[-1]:
-                        outer.append(outer[0])
-                    poly = mg.newpolygon()
-                    poly.outerboundaryis = outer
-                    for hole in polycoords[1:]:
-                        inner = [(x, y) for x, y, *rest in hole]
-                        if inner and inner[0] != inner[-1]:
-                            inner.append(inner[0])
-                        if inner:
-                            poly.innerboundaryis.append(inner)
-            # ignore non-polygons
+                poly.outerboundaryis = _close_ring(outer)
+                for hole in inners:
+                    hole = _close_ring(hole)
+                    if hole:
+                        poly.innerboundaryis.append(hole)
 
     out_path = os.path.join(out_dir, filename)
     kml.save(out_path)
