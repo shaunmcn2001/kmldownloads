@@ -248,7 +248,7 @@ PRESET_HEX = {
     "Quotes (#A23F97)":   "#A23F97",
     "Sales (#FF0000)":    "#FF0000",
     "For Sales (#ED7D31)": "#ED7D31",
-    "Subject Old (#1859A9)": "##859A9",
+    "Subject Old (#1859A9)": "#1859A9",
     "Custom…":            None
 }
 
