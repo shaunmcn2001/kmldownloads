@@ -275,6 +275,7 @@ kml_colour = _hex_rgb_to_kml_abgr(selected_hex, alpha) if selected_hex else None
 # Directly provide download if features exist
 if st.session_state.get("features"):
     merged_fc = {"type": "FeatureCollection", "features": st.session_state["features"]}
+    
     path = save_kml(
         merged_fc,
         out_dir=folder,
@@ -282,7 +283,9 @@ if st.session_state.get("features"):
         state=None,
         colour=kml_colour,
         line_width=float(line_width),
+        folder_name=folder  # 👈 ensures the folder name shows up in Earth sidebar
     )
+
 
     with open(path, "rb") as fh:
         st.download_button(
