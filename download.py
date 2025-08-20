@@ -6,7 +6,7 @@ import simplekml
 DEFAULT_STYLE = {
     "line_width": 1.5,
     "line_color": "ffaaaaaa",   # aabbggrr (KML is ABGR)
-    "poly_color": "7d00ff00",   # 0x7d (opacity) + 00ff00 (green) -> ABGR order
+    "poly_color": "7d00ff00",   # 0x7d opacity + 00ff00 green -> ABGR
 }
 
 STATE_COLOURS = {
@@ -44,29 +44,41 @@ def _feature_popup_html(props: Dict) -> str:
     parts.append("</table></center>")
     return "".join(parts)
 
-def _iter_outer_rings(geom: Dict) -> Iterable[List[Tuple[float, float]]]:
-    """Yield outer rings as (lon,lat) lists from Polygon/MultiPolygon; ignore holes."""
-    if not geom: return
-    gtype = geom.get("type"); coords = geom.get("coordinates")
+def _close_ring(r: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    if r and r[0] != r[-1]:
+        return r + [r[0]]
+    return r
 
-    def as_positions(seq):
-        out: List[Tuple[float, float]] = []
-        for pt in seq or []:
-            if isinstance(pt, (list, tuple)) and pt and isinstance(pt[0], (int, float)):
-                x = float(pt[0]); y = float(pt[1]) if len(pt) > 1 else 0.0
-                out.append((x, y))
-        return out
+def _as_positions(seq) -> List[Tuple[float, float]]:
+    out: List[Tuple[float, float]] = []
+    for pt in seq or []:
+        if isinstance(pt, (list, tuple)) and pt and isinstance(pt[0], (int, float)):
+            x = float(pt[0]); y = float(pt[1]) if len(pt) > 1 else 0.0
+            out.append((x, y))
+    return out
 
-    if gtype == "Polygon":
-        if isinstance(coords, list) and coords:
-            ring = as_positions(coords[0]); 
-            if ring: yield ring
-    elif gtype == "MultiPolygon":
-        if isinstance(coords, list):
-            for poly in coords:
-                ring = as_positions(poly[0] if (isinstance(poly, list) and poly) else [])
-                if ring: yield ring
-    # else ignore non-polygons
+def _iter_polygons_with_holes(geom: Dict) -> Iterable[Tuple[List[Tuple[float,float]], List[List[Tuple[float,float]]]]]:
+    """
+    Yield (outer_ring, inner_rings[]) pairs from a GeoJSON Polygon/MultiPolygon.
+    Rings are (lon,lat) tuples and are NOT closed here.
+    """
+    if not geom:
+        return
+    t = geom.get("type")
+    c = geom.get("coordinates")
+    if t == "Polygon" and isinstance(c, list) and c:
+        outer = _as_positions(c[0])
+        inners = [_as_positions(r) for r in c[1:]]
+        if outer:
+            yield outer, [r for r in inners if r]
+    elif t == "MultiPolygon" and isinstance(c, list):
+        for poly in c:
+            if not poly: continue
+            outer = _as_positions(poly[0])
+            inners = [_as_positions(r) for r in poly[1:]]
+            if outer:
+                yield outer, [r for r in inners if r]
+    # ignore non-polygons
 
 def save_kml(
     feature_collection: Dict,
@@ -78,9 +90,10 @@ def save_kml(
 ) -> str:
     """
     Save a GeoJSON FeatureCollection to a styled KML file with popups.
-    - Polygon/MultiPolygon supported (outer ring only)
-    - Sidebar shows ONLY the placemark name (no description preview)
-    - Balloon popup shows the full Attributes table
+    - Groups ALL features by lotidstring (fallback: label -> lotplan -> 'parcel')
+    - ONE Placemark per group, even if multiple polygons
+    - Polygon + MultiPolygon supported (holes included)
+    - Sidebar shows ONLY the placemark name (snippet hidden)
     """
     os.makedirs(out_dir, exist_ok=True)
     kml = simplekml.Kml()
@@ -88,38 +101,39 @@ def save_kml(
     poly_colour = colour or (STATE_COLOURS.get(state.upper(), DEFAULT_STYLE["poly_color"]) if state else DEFAULT_STYLE["poly_color"])
     line_colour = DEFAULT_STYLE["line_color"]
 
-    polystyle = simplekml.PolyStyle(color=poly_colour, fill=1, outline=1)
-    linestyle = simplekml.LineStyle(color=line_colour, width=line_width)
-
-    for feat in feature_collection.get("features", []) or []:
-        geom = feat.get("geometry", {}) or {}
-        props = (feat.get("properties", {}) or {}).copy()
+    # Group features by lotidstring/label/lotplan
+    groups: Dict[str, Dict[str, any]] = {}
+    for f in (feature_collection.get("features", []) or []):
+        props = (f.get("properties", {}) or {}).copy()
         if state: props["state"] = state
+        key = props.get("lotidstring") or props.get("label") or props.get("lotplan") or "parcel"
+        groups.setdefault(key, {"props": props, "geoms": []})
+        groups[key]["geoms"].append(f.get("geometry", {}) or {})
 
-        name = (
-            props.get("label") or props.get("lotidstring") or props.get("lotplan")
-            or props.get("planparcel") or props.get("plan") or "parcel"
-        )
+    # Write one placemark per key, attach multiple polygons to it
+    for key, bundle in groups.items():
+        props = bundle["props"]
+        name = key
         desc_html = _feature_popup_html(props)
 
-        wrote_any = False
-        for ring in _iter_outer_rings(geom):
-            if not ring: continue
-            if ring[0] != ring[-1]:
-                ring = ring + [ring[0]]  # close ring
+        pm = kml.newplacemark(name=name, description=desc_html)
+        pm.snippet = simplekml.Snippet("", maxlines=0)  # sidebar: name only
 
-            p = kml.newpolygon(name=name)
-            p.outerboundaryis = ring
-            p.style.polystyle = polystyle
-            p.style.linestyle = linestyle
+        # Style can be set on placemark; child polygons inherit
+        pm.style.polystyle = simplekml.PolyStyle(color=poly_colour, fill=1, outline=1)
+        pm.style.linestyle = simplekml.LineStyle(color=line_colour, width=line_width)
 
-            # 🔑 Sidebar shows only the name; popup shows the table
-            p.description = desc_html
-            p.snippet = simplekml.Snippet("", maxlines=0)  # hide snippet preview in side panel
-
-            wrote_any = True
-        if not wrote_any:
-            continue
+        for geom in bundle["geoms"]:
+            for outer, inners in _iter_polygons_with_holes(geom):
+                if not outer:
+                    continue
+                outer = _close_ring(outer)
+                poly = pm.newpolygon()
+                poly.outerboundaryis = outer
+                for hole in inners:
+                    hole = _close_ring(hole)
+                    if hole:
+                        poly.innerboundaryis.append(hole)
 
     out_path = os.path.join(out_dir, filename)
     kml.save(out_path)
