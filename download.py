@@ -16,16 +16,9 @@ STATE_COLOURS = {
 }
 
 def _kml_color_from_rgba(r: int, g: int, b: int, a: int) -> str:
-    # KML color is aabbggrr hex
     return f"{a:02x}{b:02x}{g:02x}{r:02x}"
 
 def _feature_popup_html(props: Dict) -> str:
-    """
-    Build a centered HTML table like the provided example.
-    Keeps the preferred order first, then appends any extra fields.
-    Shows empty values as empty cells (no filtering).
-    """
-    # Preferred ordering (add/remove fields as you wish)
     preferred = [
         "controllingauthorityoid","planoid","plannumber","planlabel","itstitlestatus",
         "itslotid","stratumlevel","hasstratum","classsubtype","lotnumber","sectionnumber",
@@ -33,75 +26,47 @@ def _feature_popup_html(props: Dict) -> str:
         "centroidid","shapeuuid","changetype","lotidstring","processstate","urbanity",
         "Shape__Length","Shape__Area","cadid","createdate","modifieddate"
     ]
-
-    # Start with preferred keys that exist, then any remaining keys in alpha order
     seen = set()
-    rows_kv = []
+    rows = []
     for k in preferred:
         if k in props:
-            rows_kv.append((k, props.get(k, "")))
-            seen.add(k)
-
-    # Append any extra props not in preferred list (sorted for stability)
+            rows.append((k, props.get(k, ""))); seen.add(k)
     for k in sorted(props.keys()):
         if k not in seen:
-            rows_kv.append((k, props.get(k, "")))
+            rows.append((k, props.get(k, "")))
 
-    # Build HTML with alternating row background
-    parts = []
-    parts.append("<center><table>")
-    parts.append("<tr><th colspan='2' align='center'><em>Attributes</em></th></tr>")
-
-    for i, (k, v) in enumerate(rows_kv):
+    parts = ["<center><table>",
+             "<tr><th colspan='2' align='center'><em>Attributes</em></th></tr>"]
+    for i, (k, v) in enumerate(rows):
         bg = '#E3E3F3' if i % 2 == 0 else ''
-        # stringify value; keep blanks as blanks
         val = "" if v is None else str(v)
-        parts.append(
-            f"<tr bgcolor=\"{bg}\">"
-            f"<th>{k}</th>"
-            f"<td>{val}</td>"
-            f"</tr>"
-        )
-
+        parts.append(f'<tr bgcolor="{bg}"><th>{k}</th><td>{val}</td></tr>')
     parts.append("</table></center>")
     return "".join(parts)
 
-# ---------- NEW: robust ring iterator ----------
 def _iter_outer_rings(geom: Dict) -> Iterable[List[Tuple[float, float]]]:
-    """
-    Yield outer rings as [(lon, lat), ...] from a GeoJSON Polygon/MultiPolygon.
-    Ignores holes. Safely flattens nesting and 3D coords.
-    """
-    if not geom:
-        return
-    gtype = geom.get("type")
-    coords = geom.get("coordinates")
+    """Yield outer rings as (lon,lat) lists from Polygon/MultiPolygon; ignore holes."""
+    if not geom: return
+    gtype = geom.get("type"); coords = geom.get("coordinates")
 
     def as_positions(seq):
         out: List[Tuple[float, float]] = []
         for pt in seq or []:
-            # pt can be [x,y], [x,y,z], or nested
             if isinstance(pt, (list, tuple)) and pt and isinstance(pt[0], (int, float)):
                 x = float(pt[0]); y = float(pt[1]) if len(pt) > 1 else 0.0
                 out.append((x, y))
         return out
 
     if gtype == "Polygon":
-        # coords: [ [ring0], [hole1], ... ]
         if isinstance(coords, list) and coords:
-            ring0 = coords[0]
-            ring = as_positions(ring0)
-            if ring:
-                yield ring
+            ring = as_positions(coords[0]); 
+            if ring: yield ring
     elif gtype == "MultiPolygon":
-        # coords: [ [ [ring0], [hole1], ... ], ... ]
         if isinstance(coords, list):
             for poly in coords:
-                ring0 = poly[0] if (isinstance(poly, list) and poly) else []
-                ring = as_positions(ring0)
-                if ring:
-                    yield ring
-    # else: ignore non-polygons for KML polygon export
+                ring = as_positions(poly[0] if (isinstance(poly, list) and poly) else [])
+                if ring: yield ring
+    # else ignore non-polygons
 
 def save_kml(
     feature_collection: Dict,
@@ -113,8 +78,9 @@ def save_kml(
 ) -> str:
     """
     Save a GeoJSON FeatureCollection to a styled KML file with popups.
-    Returns the file path.
-    Handles Polygon and MultiPolygon (outer ring only); skips non-polygons.
+    - Polygon/MultiPolygon supported (outer ring only)
+    - Sidebar shows ONLY the placemark name (no description preview)
+    - Balloon popup shows the full Attributes table
     """
     os.makedirs(out_dir, exist_ok=True)
     kml = simplekml.Kml()
@@ -128,31 +94,30 @@ def save_kml(
     for feat in feature_collection.get("features", []) or []:
         geom = feat.get("geometry", {}) or {}
         props = (feat.get("properties", {}) or {}).copy()
+        if state: props["state"] = state
 
-        if state:
-            props["state"] = state
-
-        # name for placemark
         name = (
             props.get("label") or props.get("lotidstring") or props.get("lotplan")
             or props.get("planparcel") or props.get("plan") or "parcel"
         )
+        desc_html = _feature_popup_html(props)
 
         wrote_any = False
         for ring in _iter_outer_rings(geom):
-            if not ring:
-                continue
-            # Ensure ring is closed
+            if not ring: continue
             if ring[0] != ring[-1]:
-                ring = ring + [ring[0]]
+                ring = ring + [ring[0]]  # close ring
+
             p = kml.newpolygon(name=name)
-            p.outerboundaryis = ring              # simplekml accepts (lon, lat) pairs
+            p.outerboundaryis = ring
             p.style.polystyle = polystyle
             p.style.linestyle = linestyle
-            p.description = _feature_popup_html(props)
-            wrote_any = True
 
-        # If geometry wasn’t a polygon, skip silently
+            # 🔑 Sidebar shows only the name; popup shows the table
+            p.description = desc_html
+            p.snippet = simplekml.Snippet("", maxlines=0)  # hide snippet preview in side panel
+
+            wrote_any = True
         if not wrote_any:
             continue
 
