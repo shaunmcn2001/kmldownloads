@@ -96,7 +96,8 @@ def save_kml(
     parent = kml.newfolder(name=folder_name) if folder_name else kml
 
     poly_colour = colour or (STATE_COLOURS.get(state.upper(), DEFAULT_STYLE["poly_color"]) if state else DEFAULT_STYLE["poly_color"])
-    line_colour = DEFAULT_STYLE["line_color"]
+    line_colour = poly_colour   
+
 
     # Group features
     groups: Dict[str, Dict[str, any]] = {}
