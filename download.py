@@ -20,16 +20,51 @@ def _kml_color_from_rgba(r: int, g: int, b: int, a: int) -> str:
     return f"{a:02x}{b:02x}{g:02x}{r:02x}"
 
 def _feature_popup_html(props: Dict) -> str:
-    keys = [
-        "source","state","lot","plan","lotplan","section","lotidstring","parcel",
-        "volume","folio","locality","shire_name","planlabel","lotnumber",
-        "sectionnumber","lot_area","shape_Area","st_area(shape)"
+    """
+    Build a centered HTML table like the provided example.
+    Keeps the preferred order first, then appends any extra fields.
+    Shows empty values as empty cells (no filtering).
+    """
+    # Preferred ordering (add/remove fields as you wish)
+    preferred = [
+        "controllingauthorityoid","planoid","plannumber","planlabel","itstitlestatus",
+        "itslotid","stratumlevel","hasstratum","classsubtype","lotnumber","sectionnumber",
+        "planlotarea","planlotareaunits","startdate","enddate","lastupdate","msoid",
+        "centroidid","shapeuuid","changetype","lotidstring","processstate","urbanity",
+        "Shape__Length","Shape__Area","cadid","createdate","modifieddate"
     ]
-    rows = []
-    for k in keys:
-        if k in props and props[k] not in (None, "", " "):
-            rows.append(f"<tr><th style='text-align:left;padding-right:8px'>{k}</th><td>{props[k]}</td></tr>")
-    return "<table>" + "".join(rows) + "</table>"
+
+    # Start with preferred keys that exist, then any remaining keys in alpha order
+    seen = set()
+    rows_kv = []
+    for k in preferred:
+        if k in props:
+            rows_kv.append((k, props.get(k, "")))
+            seen.add(k)
+
+    # Append any extra props not in preferred list (sorted for stability)
+    for k in sorted(props.keys()):
+        if k not in seen:
+            rows_kv.append((k, props.get(k, "")))
+
+    # Build HTML with alternating row background
+    parts = []
+    parts.append("<center><table>")
+    parts.append("<tr><th colspan='2' align='center'><em>Attributes</em></th></tr>")
+
+    for i, (k, v) in enumerate(rows_kv):
+        bg = '#E3E3F3' if i % 2 == 0 else ''
+        # stringify value; keep blanks as blanks
+        val = "" if v is None else str(v)
+        parts.append(
+            f"<tr bgcolor=\"{bg}\">"
+            f"<th>{k}</th>"
+            f"<td>{val}</td>"
+            f"</tr>"
+        )
+
+    parts.append("</table></center>")
+    return "".join(parts)
 
 # ---------- NEW: robust ring iterator ----------
 def _iter_outer_rings(geom: Dict) -> Iterable[List[Tuple[float, float]]]:
