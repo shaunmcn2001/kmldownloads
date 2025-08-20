@@ -248,6 +248,7 @@ PRESET_HEX = {
     "Quotes (#A23F97)":   "#A23F97",
     "Sales (#FF0000)":    "#FF0000",
     "For Sales (#ED7D31)": "#ED7D31",
+    "Subject Old (#1859A9)": "##859A9",
     "Custom…":            None
 }
 
@@ -256,9 +257,9 @@ with colA:
     folder = st.text_input("Folder name", value="parcels_export")
     preset = st.selectbox("Fill colour preset", list(PRESET_HEX.keys()), index=0)
 with colB:
-    alpha = st.number_input("Opacity (0–255)", min_value=0, max_value=255, value=125, step=5)
+    alpha = st.number_input("Opacity (0–100)", min_value=0, max_value=100, value=40, step=5)
 with colC:
-    line_width = st.number_input("Border width (px)", min_value=1.0, max_value=10.0, value=2.0, step=0.5)
+    line_width = st.number_input("Border width (px)", min_value=1.0, max_value=10.0, value=3.0, step=0.5)
 
 custom_hex = None
 if preset == "Custom…":
